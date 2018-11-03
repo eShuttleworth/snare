@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 
 class Cloner(object):
-    def __init__(self, root, max_depth, css_validate):
+    def __init__(self, root, max_depth, css_validate, collect_metadata):
         self.visited_urls = []
         self.root, self.error_page = self.add_scheme(root)
         self.max_depth = max_depth
@@ -28,6 +28,7 @@ class Cloner(object):
         self.new_urls = Queue()
         self.meta = {}
         self.logger = logging.getLogger(__name__)
+        self.collect_metadata = collect_metadata
 
     @staticmethod
     def add_scheme(url):
@@ -155,7 +156,19 @@ class Cloner(object):
                         if not carved_url.is_absolute():
                             carved_url = self.root.join(carved_url)
                         if carved_url.human_repr() not in self.visited_urls:
-                            await self.new_urls.put((carved_url, level+1))
+                            await self.new_urls.put((carved_url, level + 1))
+
+    async def get_metadata(self, session):
+        print('Begin metadata cloning')
+        self.meta['cloned_metadata'] = {}
+        try:
+            response = await session.get(self.root, headers={'Accept': 'text/html'}, timeout=10.0)
+            if 'Server' in response.headers:
+                self.meta['cloned_metadata']['Server'] = response.headers['Server']
+                print(('Server', response.headers['Server']))
+
+        except (aiohttp.ClientError, asyncio.TimeoutError) as client_error:
+            self.logger.error(client_error)
 
     async def get_root_host(self):
         try:
@@ -174,6 +187,8 @@ class Cloner(object):
             await self.new_urls.put((self.root, 0))
             await self.new_urls.put((self.error_page, 0))
             await self.get_body(session)
+            if self.collect_metadata:
+                await self.get_metadata(session)
         except KeyboardInterrupt:
             raise
         finally:

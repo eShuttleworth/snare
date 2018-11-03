@@ -17,20 +17,18 @@ class HttpRequestHandler():
         self.meta = meta
         self.snare_uuid = snare_uuid
         self.logger = logging.getLogger(__name__)
-        self.sroute = StaticRoute(
-            name=None, prefix='/',
-            directory=self.dir
-        )
+        self.sroute = StaticRoute(name=None, prefix='/', directory=self.dir)
         self.tanner_handler = TannerHandler(run_args, meta, snare_uuid)
+
+        if run_args.server_header:
+            self.server_header = run_args.server_header
+        else:
+            self.server_header = meta['cloned_metadata']['Server'] if meta['cloned_metadata']['Server'] else 'nginx/1.3.8'
 
     async def submit_slurp(self, data):
         try:
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as session:
-                r = await session.post(
-                    'https://{0}:8080/api?auth={1}&chan=snare_test&msg={2}'.format(
-                        self.run_args.slurp_host, self.run_args.slurp_auth, data
-                    ), data=json.dumps(data), timeout=10.0
-                )
+                r = await session.post('https://{0}:8080/api?auth={1}&chan=snare_test&msg={2}'.format(self.run_args.slurp_host, self.run_args.slurp_auth, data), data=json.dumps(data), timeout=10.0)
                 assert r.status == 200
                 r.close()
         except Exception as e:
@@ -53,15 +51,14 @@ class HttpRequestHandler():
         if self.run_args.slurp_enabled:
             await self.submit_slurp(request.path_qs)
 
-        content, content_type, headers, status_code = await self.tanner_handler.parse_tanner_response(
-            request.path_qs, event_result['response']['message']['detection'])
+        content, content_type, headers, status_code = await self.tanner_handler.parse_tanner_response(request.path_qs, event_result['response']['message']['detection'])
 
         response_headers = multidict.CIMultiDict()
 
         for name, val in headers.items():
             response_headers.add(name, val)
 
-        response_headers.add('Server', self.run_args.server_header)
+        response_headers.add('Server', self.server_header)
 
         if 'cookies' in data and 'sess_uuid' in data['cookies']:
             previous_sess_uuid = data['cookies']['sess_uuid']
@@ -77,17 +74,13 @@ class HttpRequestHandler():
             response_content_type = 'text/plain'
         else:
             response_content_type = content_type
-        response = web.Response(
-            body=content, status=status_code, headers=response_headers, content_type=response_content_type
-        )
+        response = web.Response(body=content, status=status_code, headers=response_headers, content_type=response_content_type)
         return response
 
     async def start(self):
         app = web.Application()
         app.add_routes([web.route('*', '/{tail:.*}', self.handle_request)])
-        aiohttp_jinja2.setup(
-            app, loader=jinja2.FileSystemLoader(self.dir)
-        )
+        aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(self.dir))
         middleware = SnareMiddleware(self.meta['/status_404']['hash'])
         middleware.setup_middlewares(app)
 
@@ -97,8 +90,7 @@ class HttpRequestHandler():
 
         await site.start()
         names = sorted(str(s.name) for s in self.runner.sites)
-        print("======== Running on {} ========\n"
-              "(Press CTRL+C to quit)".format(', '.join(names)))
+        print("======== Running on {} ========\n" "(Press CTRL+C to quit)".format(', '.join(names)))
 
     async def stop(self):
         await self.runner.cleanup()
